@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worldwide Hospital Locator</title>
+    <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/2/atlas.min.js"></script>
+    <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/2/atlas.min.css" />    
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background-color: white;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+
+        .search-container {
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            display: flex;
+            gap: 10px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        .search-button {
+            padding: 10px 20px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+
+        .search-button:hover {
+            background-color: #0052a3;
+        }
+
+        .search-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .main-container {
+            flex: 1;
+            display: flex;
+            position: relative;
+        }
+
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+
+        .sidebar {
+            width: 400px;
+            background-color: white;
+            box-shadow: -2px 0 4px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+            display: none;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #f8d7da;
+            color: #dc3545;
+            padding: 10px 20px;
+            border-radius: 4px;
+            z-index: 1000;
+            display: none;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            display: none;
+            z-index: 1000;
+            text-align: center;
+        }
+
+        .hospital-card {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .hospital-card:hover {
+            background-color: #f5f5f5;
+        }
+
+        .hospital-name {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .hospital-address {
+            color: #666;
+            font-size: 14px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #0066cc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        .mapboxgl-popup {
+            max-width: 300px;
+        }
+
+        .popup-content {
+            padding: 10px;
+        }
+
+        .popup-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .popup-address {
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="search-container">
+            <input 
+                type="text" 
+                id="searchInput" 
+                class="search-input" 
+                placeholder="Enter any location (e.g., Mumbai, Delhi, Bangkok)"
+            >
+            <button id="searchButton" class="search-button">Search</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div id="map"></div>
+        <div id="sidebar" class="sidebar"></div>
+        <div id="errorMessage" class="error-message"></div>
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <span>Searching hospitals...</span>
+        </div>
+    </div>
+
+    <script>
+        const azureMap = new atlas.Map('map', {
+            center: [77.2090, 28.6139], // Default to Delhi
+            zoom: 12,
+            authOptions: {
+                authType: 'subscriptionKey',
+                subscriptionKey: 'DRLiFA8AsiDNIqZGMudUROls9EmTi5P46QPeEvYix3tDmm9bMW6nJQQJ99AJACYeBjFh5ej6AAAgAZMP4WLh'
+            }
+        });
+    
+        let activeMarkers = [];
+    
+        // Get DOM elements
+        const searchInput = document.getElementById('searchInput');
+        const searchButton = document.getElementById('searchButton');
+        const errorMessage = document.getElementById('errorMessage');
+        const loading = document.getElementById('loading');
+        const sidebar = document.getElementById('sidebar');
+    
+        // Add event listeners
+        searchButton.addEventListener('click', handleSearch);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleSearch();
+        });
+    
+        async function handleSearch() {
+            const query = searchInput.value.trim();
+            if (!query) {
+                showError('Please enter a location');
+                return;
+            }
+    
+            resetUI();
+    
+            try {
+                // Step 1: Geocode the location using Azure Maps
+                const geocodeResponse = await fetch(`https://atlas.microsoft.com/search/address/json?api-version=1.0&query=${encodeURIComponent(query)}&subscription-key=DRLiFA8AsiDNIqZGMudUROls9EmTi5P46QPeEvYix3tDmm9bMW6nJQQJ99AJACYeBjFh5ej6AAAgAZMP4WLh`);
+                const geocodeData = await geocodeResponse.json();
+    
+                if (geocodeData.results && geocodeData.results.length > 0) {
+                    const location = geocodeData.results[0].position;
+                    azureMap.setCamera({ center: [location.lon, location.lat], zoom: 12 });
+    
+                    // Step 2: Search for hospitals using the coordinates
+                    searchHospitals(location.lat, location.lon);
+                } else {
+                    showError('Location not found. Please try another search.');
+                }
+            } catch (error) {
+                showError('An error occurred. Please try again.');
+                console.error('Search error:', error);
+            }
+        }
+    
+        async function searchHospitals(lat, lon) {
+            const radius = 10000; // 10km radius
+            const azureMapsKey = 'DRLiFA8AsiDNIqZGMudUROls9EmTi5P46QPeEvYix3tDmm9bMW6nJQQJ99AJACYeBjFh5ej6AAAgAZMP4WLh';
+            const url = `https://atlas.microsoft.com/search/poi/category/json?api-version=1.0&query=hospital&lat=${lat}&lon=${lon}&radius=${radius}&subscription-key=${azureMapsKey}`;
+    
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+    
+                if (data.results && data.results.length > 0) {
+                    displayHospitals(data.results);
+                } else {
+                    showError('No hospitals found in this area.');
+                }
+            } catch (error) {
+                console.error('Error fetching hospitals:', error);
+                showError('An error occurred while fetching hospitals.');
+            }
+        }
+    
+        function displayHospitals(hospitals) {
+            sidebar.style.display = 'block';
+            sidebar.innerHTML = '<h2 style="padding: 15px;">Nearby Hospitals</h2>';
+            clearMarkers();
+    
+            hospitals.forEach(hospital => {
+                const position = [hospital.position.lon, hospital.position.lat];
+    
+                // Create hospital card in the sidebar
+                const hospitalCard = document.createElement('div');
+                hospitalCard.className = 'hospital-card';
+                hospitalCard.innerHTML = `
+                    <div class="hospital-name">${hospital.poi.name}</div>
+                    <div class="hospital-address">${hospital.address.freeformAddress}</div>
+                `;
+                sidebar.appendChild(hospitalCard);
+    
+                // Create a marker on the map for each hospital
+                const marker = new atlas.HtmlMarker({
+                    position: position,
+                    color: 'DodgerBlue',
+                    text: 'H'
+                });
+                azureMap.markers.add(marker);
+    
+                // Add click event to center map on the hospital
+                hospitalCard.addEventListener('click', () => {
+                    azureMap.setCamera({ center: position, zoom: 15 });
+                });
+    
+                activeMarkers.push(marker);
+            });
+    
+            loading.style.display = 'none';
+        }
+    
+        function clearMarkers() {
+            activeMarkers.forEach(marker => azureMap.markers.remove(marker));
+            activeMarkers = [];
+        }
+    
+        function resetUI() {
+            errorMessage.style.display = 'none';
+            sidebar.style.display = 'none';
+            loading.style.display = 'block';
+            searchButton.disabled = true;
+            clearMarkers();
+    
+            setTimeout(() => searchButton.disabled = false, 1000);
+        }
+    
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            loading.style.display = 'none';
+            sidebar.style.display = 'none';
+            searchButton.disabled = false;
+        }
+    
+        // Add map controls
+        azureMap.controls.add(new atlas.control.ZoomControl(), { position: 'top-right' });
+    </script>
+    
+    
+    
+</body>
+</html>
